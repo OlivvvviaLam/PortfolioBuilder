@@ -275,9 +275,12 @@ class FinvizCollector:
             print(f"Error in screening: {e}")
             return []
 
-    def get_all_data(self) -> Dict[str, Union[str, pd.DataFrame, List[str]]]:
+    def get_all_data(self, chart_output_dir: str = "charts") -> Dict[str, Union[str, pd.DataFrame, List[str]]]:
         """
         Fetch all Finviz data points as requested.
+        
+        Args:
+            chart_output_dir: Directory to save chart images (default: "charts")
         """
         results = {}
         
@@ -286,8 +289,8 @@ class FinvizCollector:
         
         # Ticker-specific results
         if self.ticker:
-            results["DailyChart"] = self.get_daily_chart()
-            results["WeeklyChart"] = self.get_weekly_chart()
+            results["DailyChart"] = self.get_daily_chart(output_dir=chart_output_dir)
+            results["WeeklyChart"] = self.get_weekly_chart(output_dir=chart_output_dir)
             results["KeyFinanceStat_finviz"] = self.get_key_finance_stats()
             results["Peers"] = self.get_peers()
             

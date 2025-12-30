@@ -4,8 +4,9 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Union
-from _yfinance import YFinanceCollector
-from finviz import FinvizCollector
+from src.collectors._yfinance import YFinanceCollector
+from src.collectors.finviz import FinvizCollector
+from src.collectors.technical_indicator import TechnicalIndicator
 
 
 def sanitize_filename(name: str) -> str:
@@ -99,6 +100,17 @@ def save_data_item(data: Any, name: str, output_dir: Path, prefix: str = "") -> 
         if source_path.exists() and source_path.is_file():
             # Copy the file to output directory
             dest_path = output_dir / source_path.name
+            
+            # Check if source and destination are the same (resolve to absolute paths)
+            if source_path.resolve() == dest_path.resolve():
+                # File is already in the correct location, no need to copy
+                return {
+                    "type": "File",
+                    "status": "already_exists",
+                    "name": name,
+                    "file": str(dest_path)
+                }
+            
             shutil.copy2(source_path, dest_path)
             return {
                 "type": "File",
@@ -123,13 +135,15 @@ def save_data_item(data: Any, name: str, output_dir: Path, prefix: str = "") -> 
         return {"type": type(data).__name__, "status": "unsupported", "name": name}
 
 
-def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> str:
+def collect_all_data(ticker: str, output_base_dir: str = "data/raw", timestamp: str = None) -> str:
     """
     Collect data from both YFinance and Finviz collectors and save to a single directory.
     
     Args:
         ticker: Stock ticker symbol (e.g., 'AAPL')
         output_base_dir: Base directory for output
+        timestamp: Optional timestamp string. If not provided, a new one will be generated.
+                   Pass the same timestamp to collect multiple tickers in the same run.
         
     Returns:
         Path to the output directory
@@ -138,9 +152,11 @@ def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> st
     print(f"Starting data collection for {ticker}")
     print(f"{'='*60}\n")
     
-    # Create timestamped output directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = Path(output_base_dir) / f"{ticker}_{timestamp}"
+    # Create timestamped output directory: data/raw/{timestamp}/{ticker}/
+    # Use provided timestamp or generate a new one
+    if timestamp is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = Path(output_base_dir) / timestamp / ticker
     output_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"Output directory: {output_dir}\n")
@@ -154,7 +170,7 @@ def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> st
     saved_files = []
     
     # Collect YFinance data
-    print("\n[1/2] Collecting YFinance data...")
+    print("\n[1/3] Collecting YFinance data...")
     try:
         yf_data = yf_collector.get_all_data()
         print(f"✓ YFinance data collected: {len(yf_data)} data points")
@@ -167,6 +183,8 @@ def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> st
                 print(f"    ✓ {key} ({result['type']})")
             elif result.get("status") == "copied":
                 print(f"    ✓ {key} (File copied)")
+            elif result.get("status") == "already_exists":
+                print(f"    ✓ {key} (File already in place)")
             elif result.get("status") == "empty":
                 print(f"    ○ {key} (empty)")
                 
@@ -175,10 +193,172 @@ def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> st
         import traceback
         traceback.print_exc()
     
-    # Collect Finviz data
-    print("\n[2/2] Collecting Finviz data...")
+    # Process technical indicators
+    print("\n[2/3] Processing Technical Indicators...")
     try:
-        fv_data = fv_collector.get_all_data()
+        ti = TechnicalIndicator()
+        
+        # Define paths to historical data files
+        daily_path = output_dir / "yfinance_History1mo_d.csv"
+        weekly_path = output_dir / "yfinance_History6m_1wk.csv"
+        monthly_path = output_dir / "yfinance_History2y_1mo.csv"
+        
+        # Process daily indicators if file exists
+        if daily_path.exists():
+            print("  Processing daily indicators (1mo)...")
+            df_daily = pd.read_csv(daily_path)
+            df_daily_res = ti.calculate_1mo_daily(df_daily)
+            
+            output_daily = output_dir / "yfinance_History1mo_d_indicators.csv"
+            df_daily_res.to_csv(output_daily, index=False)
+            saved_files.append({
+                "type": "DataFrame",
+                "status": "saved",
+                "name": "History1mo_d_indicators",
+                "file": str(output_daily),
+                "rows": len(df_daily_res),
+                "columns": len(df_daily_res.columns)
+            })
+            print(f"    ✓ Daily indicators saved")
+            
+            # Generate 3 daily charts
+            print(f"    Generating daily charts...")
+            chart_daily_price = output_dir / "yfinance_History1mo_d_price_overlays.png"
+            ti.plot_price_overlays(df_daily_res, chart_daily_price, title=f"{ticker} - Daily")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History1mo_d_price_overlays",
+                "file": str(chart_daily_price)
+            })
+            
+            chart_daily_momentum = output_dir / "yfinance_History1mo_d_momentum.png"
+            ti.plot_momentum_indicators(df_daily_res, chart_daily_momentum, title=f"{ticker} - Daily")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History1mo_d_momentum",
+                "file": str(chart_daily_momentum)
+            })
+            
+            chart_daily_volume = output_dir / "yfinance_History1mo_d_volume.png"
+            ti.plot_volume_indicators(df_daily_res, chart_daily_volume, title=f"{ticker} - Daily")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History1mo_d_volume",
+                "file": str(chart_daily_volume)
+            })
+            print(f"    ✓ Daily charts generated (3 files)")
+        
+        # Process weekly indicators if file exists
+        if weekly_path.exists():
+            print("  Processing weekly indicators (6m)...")
+            df_weekly = pd.read_csv(weekly_path)
+            df_weekly_res = ti.calculate_6m_weekly(df_weekly)
+            
+            output_weekly = output_dir / "yfinance_History6m_1wk_indicators.csv"
+            df_weekly_res.to_csv(output_weekly, index=False)
+            saved_files.append({
+                "type": "DataFrame",
+                "status": "saved",
+                "name": "History6m_1wk_indicators",
+                "file": str(output_weekly),
+                "rows": len(df_weekly_res),
+                "columns": len(df_weekly_res.columns)
+            })
+            print(f"    ✓ Weekly indicators saved")
+            
+            # Generate 3 weekly charts
+            print(f"    Generating weekly charts...")
+            chart_weekly_price = output_dir / "yfinance_History6m_1wk_price_overlays.png"
+            ti.plot_price_overlays(df_weekly_res, chart_weekly_price, title=f"{ticker} - Weekly")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History6m_1wk_price_overlays",
+                "file": str(chart_weekly_price)
+            })
+            
+            chart_weekly_momentum = output_dir / "yfinance_History6m_1wk_momentum.png"
+            ti.plot_momentum_indicators(df_weekly_res, chart_weekly_momentum, title=f"{ticker} - Weekly")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History6m_1wk_momentum",
+                "file": str(chart_weekly_momentum)
+            })
+            
+            chart_weekly_volume = output_dir / "yfinance_History6m_1wk_volume.png"
+            ti.plot_volume_indicators(df_weekly_res, chart_weekly_volume, title=f"{ticker} - Weekly")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History6m_1wk_volume",
+                "file": str(chart_weekly_volume)
+            })
+            print(f"    ✓ Weekly charts generated (3 files)")
+        
+        # Process monthly indicators if file exists
+        if monthly_path.exists():
+            print("  Processing monthly indicators (2y)...")
+            df_monthly = pd.read_csv(monthly_path)
+            df_monthly_res = ti.calculate_2y_monthly(df_monthly)
+            
+            output_monthly = output_dir / "yfinance_History2y_1mo_indicators.csv"
+            df_monthly_res.to_csv(output_monthly, index=False)
+            saved_files.append({
+                "type": "DataFrame",
+                "status": "saved",
+                "name": "History2y_1mo_indicators",
+                "file": str(output_monthly),
+                "rows": len(df_monthly_res),
+                "columns": len(df_monthly_res.columns)
+            })
+            print(f"    ✓ Monthly indicators saved")
+            
+            # Generate 3 monthly charts
+            print(f"    Generating monthly charts...")
+            chart_monthly_price = output_dir / "yfinance_History2y_1mo_price_overlays.png"
+            ti.plot_price_overlays(df_monthly_res, chart_monthly_price, title=f"{ticker} - Monthly")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History2y_1mo_price_overlays",
+                "file": str(chart_monthly_price)
+            })
+            
+            chart_monthly_momentum = output_dir / "yfinance_History2y_1mo_momentum.png"
+            ti.plot_momentum_indicators(df_monthly_res, chart_monthly_momentum, title=f"{ticker} - Monthly")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History2y_1mo_momentum",
+                "file": str(chart_monthly_momentum)
+            })
+            
+            chart_monthly_volume = output_dir / "yfinance_History2y_1mo_volume.png"
+            ti.plot_volume_indicators(df_monthly_res, chart_monthly_volume, title=f"{ticker} - Monthly")
+            saved_files.append({
+                "type": "File",
+                "status": "saved",
+                "name": "History2y_1mo_volume",
+                "file": str(chart_monthly_volume)
+            })
+            print(f"    ✓ Monthly charts generated (3 files)")
+        
+        print(f"✓ Technical indicators processing complete")
+        
+    except Exception as e:
+        print(f"✗ Error processing technical indicators: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # Collect Finviz data
+    print("\n[3/3] Collecting Finviz data...")
+    try:
+        # Pass output_dir to save charts in the data directory instead of "charts"
+        fv_data = fv_collector.get_all_data(chart_output_dir=str(output_dir))
         print(f"✓ Finviz data collected: {len(fv_data)} data points")
         
         print("  Saving Finviz data...")
@@ -189,6 +369,8 @@ def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> st
                 print(f"    ✓ {key} ({result['type']})")
             elif result.get("status") == "copied":
                 print(f"    ✓ {key} (File copied)")
+            elif result.get("status") == "already_exists":
+                print(f"    ✓ {key} (File already in place)")
             elif result.get("status") == "empty":
                 print(f"    ○ {key} (empty)")
                 
@@ -215,27 +397,48 @@ def collect_all_data(ticker: str, output_base_dir: str = "data/processed") -> st
     print(f"\n{'='*60}")
     print(f"✓ Data collection complete!")
     print(f"  Output directory: {output_dir}")
-    print(f"  Total files saved: {len([f for f in saved_files if f.get('status') in ['saved', 'copied']])}")
+    print(f"  Total files saved: {len([f for f in saved_files if f.get('status') in ['saved', 'copied', 'already_exists']])}")
     print(f"  Summary file: {summary_path}")
     print(f"{'='*60}\n")
     
-    return str(output_dir)
+    return str(output_dir), timestamp
 
 
 def main():
     """Main execution function."""
-    # Example usage - change ticker as needed
-    ticker = "AAPL"  # You can change this to any ticker
+    # Example usage - collect data for multiple tickers in a single run
+    # All tickers will share the same timestamp
+    tickers = ["AAPL"]  # You can add multiple tickers, e.g., ["AAPL", "MSFT", "GOOGL"]
     
     # Uncomment to prompt for ticker input:
-    # ticker = input("Enter ticker symbol (e.g., AAPL): ").strip().upper()
-    # if not ticker:
-    #     ticker = "AAPL"
-    #     print(f"No ticker provided, using default: {ticker}")
+    # ticker_input = input("Enter ticker symbols separated by commas (e.g., AAPL,MSFT): ").strip().upper()
+    # if ticker_input:
+    #     tickers = [t.strip() for t in ticker_input.split(",")]
+    # else:
+    #     print(f"No tickers provided, using default: {tickers}")
     
     try:
-        output_dir = collect_all_data(ticker)
-        print(f"Success! Check the output directory: {output_dir}")
+        # Generate a single timestamp for the entire run
+        run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        print(f"\n{'='*60}")
+        print(f"Starting data collection run")
+        print(f"Timestamp: {run_timestamp}")
+        print(f"Tickers: {', '.join(tickers)}")
+        print(f"{'='*60}")
+        
+        output_dirs = []
+        for ticker in tickers:
+            output_dir, _ = collect_all_data(ticker, timestamp=run_timestamp)
+            output_dirs.append(output_dir)
+        
+        print(f"\n{'='*60}")
+        print(f"✓ All data collection complete!")
+        print(f"  Collected {len(tickers)} ticker(s)")
+        print(f"  Shared timestamp: {run_timestamp}")
+        print(f"  Output directories:")
+        for output_dir in output_dirs:
+            print(f"    - {output_dir}")
+        print(f"{'='*60}\n")
     except Exception as e:
         print(f"\n✗ Error during data collection: {e}")
         import traceback

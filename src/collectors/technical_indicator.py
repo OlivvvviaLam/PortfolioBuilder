@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import os
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend to avoid tkinter errors
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -248,8 +250,8 @@ class TechnicalIndicator:
         
         return df.round(4)
 
-    def plot_indicators(self, df, output_image, title="Technical Indicators"):
-        """Creates a visualization of the technical indicators using seaborn."""
+    def plot_price_overlays(self, df, output_image, title="Technical Indicators"):
+        """Chart 1: Price with overlays (SMAs, EMAs, Bollinger Bands, Donchian Channels)."""
         df = df.copy()
         
         # Set theme
@@ -257,57 +259,269 @@ class TechnicalIndicator:
         
         # Ensure Date is datetime and index
         if 'Date' in df.columns:
-            df['Date'] = pd.to_datetime(df['Date'])
+            df['Date'] = pd.to_datetime(df['Date'], utc=True)
             df.set_index('Date', inplace=True)
             
-        # Create subplots
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(15, 12), sharex=True, 
-                                            gridspec_kw={'height_ratios': [3, 1, 1]})
+        # Create figure with larger size for better readability
+        fig, ax = plt.subplots(figsize=(16, 9))
         
-        # 1. Price and Bollinger Bands / SMAs
-        sns.lineplot(data=df, x=df.index, y='Close', ax=ax1, label='Close Price', color='black', linewidth=1.5)
+        # Plot close price with thicker line
+        sns.lineplot(data=df, x=df.index, y='Close', ax=ax, label='Close Price', 
+                     color='black', linewidth=3)
         
-        if 'BB_Upper' in df.columns and 'BB_Lower' in df.columns:
-            ax1.fill_between(df.index, df['BB_Upper'], df['BB_Lower'], alpha=0.15, color='royalblue', label='Bollinger Bands')
+        # Bollinger Bands
+        if 'BB_Upper' in df.columns and 'BB_Lower' in df.columns and 'BB_Middle' in df.columns:
+            if df['BB_Upper'].notna().any():
+                ax.fill_between(df.index, df['BB_Upper'], df['BB_Lower'], 
+                               alpha=0.15, color='royalblue', label='Bollinger Bands (±2σ)')
+                sns.lineplot(data=df, x=df.index, y='BB_Middle', ax=ax, 
+                            label='BB Middle', color='blue', alpha=0.6, linestyle='--', linewidth=2)
         
-        for p in [5, 10, 20, 30]:
+        # SMAs with thicker lines
+        for p in [5, 6, 10, 12, 20, 24, 30]:
             col = f'SMA_{p}'
-            if col in df.columns:
-                sns.lineplot(data=df, x=df.index, y=col, ax=ax1, label=f'SMA {p}', alpha=0.8)
+            if col in df.columns and df[col].notna().any():
+                sns.lineplot(data=df, x=df.index, y=col, ax=ax, label=f'SMA {p}', 
+                           alpha=0.8, linewidth=2.5)
         
-        ax1.set_title(f"{title} - Price & Overlays", fontsize=16)
-        ax1.set_ylabel("Price")
-        ax1.legend(loc='upper left')
+        # EMAs with thicker lines
+        for p in [5, 6, 10, 12, 20, 24, 30]:
+            col = f'EMA_{p}'
+            if col in df.columns and df[col].notna().any():
+                sns.lineplot(data=df, x=df.index, y=col, ax=ax, label=f'EMA {p}', 
+                           alpha=0.8, linestyle='--', linewidth=2.5)
         
-        # 2. RSI
-        rsi_col = 'RSI_14'
-        if rsi_col in df.columns:
-            sns.lineplot(data=df, x=df.index, y=rsi_col, ax=ax2, label='RSI 14', color='mediumpurple')
-            ax2.axhline(70, linestyle='--', alpha=0.6, color='tomato')
-            ax2.axhline(30, linestyle='--', alpha=0.6, color='mediumseagreen')
-            ax2.set_ylim(0, 100)
-            ax2.set_ylabel("RSI")
-            ax2.set_title("Relative Strength Index (RSI)", fontsize=14)
-            ax2.legend(loc='upper left')
-
-        # 3. MACD
-        if 'MACD' in df.columns and 'MACD_Signal' in df.columns:
-            sns.lineplot(data=df, x=df.index, y='MACD', ax=ax3, label='MACD', color='dodgerblue')
-            sns.lineplot(data=df, x=df.index, y='MACD_Signal', ax=ax3, label='Signal', color='darkorange')
-            
-            if 'MACD_Hist' in df.columns:
-                # For bar chart, we use matplotlib directly as it's easier for colored bars
-                colors = ['green' if x > 0 else 'red' for x in df['MACD_Hist']]
-                ax3.bar(df.index, df['MACD_Hist'], alpha=0.3, color=colors, label='Histogram', width=0.8)
-                
-            ax3.set_title("MACD (12, 26, 9)", fontsize=14)
-            ax3.set_ylabel("Value")
-            ax3.legend(loc='upper left')
-            
+        # Donchian Channels (show one set to avoid clutter)
+        donchian_period = 20 if 'Donchian_Upper_20' in df.columns else 10
+        if f'Donchian_Upper_{donchian_period}' in df.columns:
+            if df[f'Donchian_Upper_{donchian_period}'].notna().any():
+                ax.fill_between(df.index, 
+                              df[f'Donchian_Upper_{donchian_period}'], 
+                              df[f'Donchian_Lower_{donchian_period}'],
+                              alpha=0.12, color='green', label=f'Donchian ({donchian_period})')
+        
+        ax.set_title(f"{title} - Price & Overlays", fontsize=18, fontweight='bold')
+        ax.set_ylabel("Price ($)", fontsize=14, fontweight='bold')
+        ax.set_xlabel("Date", fontsize=14, fontweight='bold')
+        ax.legend(loc='best', fontsize=11, ncol=2)
+        ax.grid(True, alpha=0.3)
+        ax.tick_params(labelsize=12)
+        
         plt.tight_layout()
-        plt.savefig(output_image)
+        plt.savefig(output_image, dpi=100)
         plt.close()
-        print(f"Saved visualization to {output_image}")
+        print(f"  Saved chart 1/3: {output_image}")
+    
+    def plot_momentum_indicators(self, df, output_image, title="Technical Indicators"):
+        """Chart 2: Momentum indicators (RSI, Stochastic, MACD)."""
+        df = df.copy()
+        
+        # Set theme
+        sns.set_theme(style="darkgrid")
+        
+        # Ensure Date is datetime and index
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], utc=True)
+            df.set_index('Date', inplace=True)
+        
+        # Determine which indicators are available
+        has_rsi = 'RSI_14' in df.columns and df['RSI_14'].notna().any()
+        has_stoch = 'Stoch_K' in df.columns and 'Stoch_D' in df.columns and df['Stoch_K'].notna().any()
+        has_macd = 'MACD' in df.columns and 'MACD_Signal' in df.columns and df['MACD'].notna().any()
+        
+        # Count available indicators
+        num_indicators = sum([has_rsi, has_stoch, has_macd])
+        
+        if num_indicators == 0:
+            print(f"  Skipped chart 2/3: No momentum indicators available")
+            return
+        
+        # Create subplots dynamically based on available data
+        fig, axes = plt.subplots(num_indicators, 1, figsize=(16, 5 * num_indicators), sharex=True)
+        if num_indicators == 1:
+            axes = [axes]  # Make it iterable
+        
+        current_ax = 0
+        
+        # 1. RSI
+        if has_rsi:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='RSI_14', ax=ax, label='RSI 14', 
+                        color='mediumpurple', linewidth=2.5)
+            if 'RSI_7' in df.columns and df['RSI_7'].notna().any():
+                sns.lineplot(data=df, x=df.index, y='RSI_7', ax=ax, label='RSI 7', 
+                            color='orchid', linewidth=2)
+            ax.axhline(70, linestyle='--', alpha=0.7, color='tomato', label='Overbought (70)', linewidth=2)
+            ax.axhline(30, linestyle='--', alpha=0.7, color='mediumseagreen', label='Oversold (30)', linewidth=2)
+            ax.axhline(50, linestyle=':', alpha=0.5, color='gray', linewidth=1.5)
+            ax.set_ylim(0, 100)
+            ax.set_ylabel("RSI", fontsize=14, fontweight='bold')
+            ax.set_title("Relative Strength Index (RSI)", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            current_ax += 1
+        
+        # 2. Stochastic Oscillator
+        if has_stoch:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='Stoch_K', ax=ax, label='%K', 
+                        color='dodgerblue', linewidth=2.5)
+            sns.lineplot(data=df, x=df.index, y='Stoch_D', ax=ax, label='%D', 
+                        color='orange', linewidth=2.5)
+            ax.axhline(80, linestyle='--', alpha=0.7, color='tomato', label='Overbought (80)', linewidth=2)
+            ax.axhline(20, linestyle='--', alpha=0.7, color='mediumseagreen', label='Oversold (20)', linewidth=2)
+            ax.set_ylim(0, 100)
+            ax.set_ylabel("Stochastic", fontsize=14, fontweight='bold')
+            ax.set_title("Stochastic Oscillator (14, 3, 3)", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            current_ax += 1
+        
+        # 3. MACD
+        if has_macd:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='MACD', ax=ax, label='MACD', 
+                        color='dodgerblue', linewidth=2.5)
+            sns.lineplot(data=df, x=df.index, y='MACD_Signal', ax=ax, label='Signal', 
+                        color='darkorange', linewidth=2.5)
+            
+            if 'MACD_Hist' in df.columns and df['MACD_Hist'].notna().any():
+                colors = ['green' if x > 0 else 'red' for x in df['MACD_Hist']]
+                # Calculate dynamic bar width based on data points
+                num_bars = len(df.index)
+                bar_width = (df.index[-1] - df.index[0]).days / num_bars * 0.7
+                ax.bar(df.index, df['MACD_Hist'], alpha=0.5, color=colors, 
+                       label='Histogram', width=bar_width)
+            
+            ax.axhline(0, linestyle='-', alpha=0.5, color='black', linewidth=1.5)
+            ax.set_title("MACD (12, 26, 9)", fontsize=16, fontweight='bold')
+            ax.set_ylabel("MACD Value", fontsize=14, fontweight='bold')
+            ax.set_xlabel("Date", fontsize=14, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+        
+        plt.tight_layout()
+        plt.savefig(output_image, dpi=100)
+        plt.close()
+        print(f"  Saved chart 2/3: {output_image}")
+    
+    def plot_volume_indicators(self, df, output_image, title="Technical Indicators"):
+        """Chart 3: Volume analysis (Volume, OBV, MFI, CMF, ATR)."""
+        df = df.copy()
+        
+        # Set theme
+        sns.set_theme(style="darkgrid")
+        
+        # Ensure Date is datetime and index
+        if 'Date' in df.columns:
+            df['Date'] = pd.to_datetime(df['Date'], utc=True)
+            df.set_index('Date', inplace=True)
+        
+        # Determine which indicators are available
+        has_volume = 'Volume' in df.columns and df['Volume'].notna().any()
+        has_obv = 'OBV' in df.columns and df['OBV'].notna().any()
+        has_mfi = 'MFI_14' in df.columns and df['MFI_14'].notna().any()
+        has_cmf = 'CMF_20' in df.columns and df['CMF_20'].notna().any()
+        has_atr = 'ATR_14' in df.columns and df['ATR_14'].notna().any()
+        
+        # Count available indicators
+        num_indicators = sum([has_volume, has_obv, has_mfi, has_cmf or has_atr])
+        
+        if num_indicators == 0:
+            print(f"  Skipped chart 3/3: No volume indicators available")
+            return
+        
+        # Create subplots dynamically based on available data
+        fig, axes = plt.subplots(num_indicators, 1, figsize=(16, 5 * num_indicators), sharex=True)
+        if num_indicators == 1:
+            axes = [axes]  # Make it iterable
+        
+        current_ax = 0
+        
+        # 1. Volume bars with moving averages
+        if has_volume:
+            ax = axes[current_ax]
+            colors = ['green' if (i > 0 and df['Close'].iloc[i] >= df['Close'].iloc[i-1]) else 'red' 
+                     for i in range(len(df))]
+            
+            # Calculate dynamic bar width based on data points
+            num_bars = len(df.index)
+            bar_width = (df.index[-1] - df.index[0]).days / num_bars * 0.8
+            ax.bar(df.index, df['Volume'], color=colors, alpha=0.7, label='Volume', width=bar_width)
+            
+            if 'Vol_Avg_10' in df.columns and df['Vol_Avg_10'].notna().any():
+                sns.lineplot(data=df, x=df.index, y='Vol_Avg_10', ax=ax, 
+                           label='Vol MA 10', color='blue', linewidth=2.5)
+            if 'Vol_Avg_20' in df.columns and df['Vol_Avg_20'].notna().any():
+                sns.lineplot(data=df, x=df.index, y='Vol_Avg_20', ax=ax, 
+                           label='Vol MA 20', color='orange', linewidth=2.5)
+            
+            ax.set_ylabel("Volume", fontsize=14, fontweight='bold')
+            ax.set_title("Trading Volume", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            current_ax += 1
+        
+        # 2. OBV (On-Balance Volume)
+        if has_obv:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='OBV', ax=ax, 
+                        label='OBV', color='purple', linewidth=2.5)
+            ax.set_ylabel("OBV", fontsize=14, fontweight='bold')
+            ax.set_title("On-Balance Volume (OBV)", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            current_ax += 1
+        
+        # 3. MFI (Money Flow Index)
+        if has_mfi:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='MFI_14', ax=ax, 
+                        label='MFI 14', color='teal', linewidth=2.5)
+            ax.axhline(80, linestyle='--', alpha=0.7, color='tomato', label='Overbought (80)', linewidth=2)
+            ax.axhline(20, linestyle='--', alpha=0.7, color='mediumseagreen', label='Oversold (20)', linewidth=2)
+            ax.set_ylim(0, 100)
+            ax.set_ylabel("MFI", fontsize=14, fontweight='bold')
+            ax.set_title("Money Flow Index (MFI)", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            current_ax += 1
+        
+        # 4. CMF (Chaikin Money Flow) or ATR
+        if has_cmf:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='CMF_20', ax=ax, 
+                        label='CMF 20', color='darkgreen', linewidth=2.5)
+            ax.axhline(0, linestyle='-', alpha=0.5, color='black', linewidth=1.5)
+            ax.axhline(0.1, linestyle='--', alpha=0.5, color='green', linewidth=1.5)
+            ax.axhline(-0.1, linestyle='--', alpha=0.5, color='red', linewidth=1.5)
+            ax.set_ylabel("CMF", fontsize=14, fontweight='bold')
+            ax.set_title("Chaikin Money Flow (CMF)", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            ax.set_xlabel("Date", fontsize=14, fontweight='bold')
+        elif has_atr:
+            ax = axes[current_ax]
+            sns.lineplot(data=df, x=df.index, y='ATR_14', ax=ax, 
+                        label='ATR 14', color='crimson', linewidth=2.5)
+            ax.set_ylabel("ATR", fontsize=14, fontweight='bold')
+            ax.set_title("Average True Range (ATR)", fontsize=16, fontweight='bold')
+            ax.legend(loc='upper left', fontsize=12)
+            ax.grid(True, alpha=0.3)
+            ax.tick_params(labelsize=12)
+            ax.set_xlabel("Date", fontsize=14, fontweight='bold')
+        
+        plt.tight_layout()
+        plt.savefig(output_image, dpi=100)
+        plt.close()
+        print(f"  Saved chart 3/3: {output_image}")
 
     def process_files(self, daily_path, weekly_path, monthly_path):
         """Reads CSV files, calculates indicators, and saves results."""
@@ -319,9 +533,11 @@ class TechnicalIndicator:
             df_daily_res.to_csv(output_daily, index=False)
             print(f"Saved daily indicators to {output_daily}")
             
-            # Save daily chart
-            chart_daily = output_daily.replace('.csv', '.png')
-            self.plot_indicators(df_daily_res, chart_daily, title="Daily Technical Indicators")
+            # Save 3 daily charts
+            base_path = output_daily.replace('.csv', '')
+            self.plot_price_overlays(df_daily_res, f"{base_path}_price_overlays.png", title="Daily")
+            self.plot_momentum_indicators(df_daily_res, f"{base_path}_momentum.png", title="Daily")
+            self.plot_volume_indicators(df_daily_res, f"{base_path}_volume.png", title="Daily")
         
         # Weekly
         if os.path.exists(weekly_path):
@@ -331,9 +547,11 @@ class TechnicalIndicator:
             df_weekly_res.to_csv(output_weekly, index=False)
             print(f"Saved weekly indicators to {output_weekly}")
             
-            # Save weekly chart
-            chart_weekly = output_weekly.replace('.csv', '.png')
-            self.plot_indicators(df_weekly_res, chart_weekly, title="Weekly Technical Indicators")
+            # Save 3 weekly charts
+            base_path = output_weekly.replace('.csv', '')
+            self.plot_price_overlays(df_weekly_res, f"{base_path}_price_overlays.png", title="Weekly")
+            self.plot_momentum_indicators(df_weekly_res, f"{base_path}_momentum.png", title="Weekly")
+            self.plot_volume_indicators(df_weekly_res, f"{base_path}_volume.png", title="Weekly")
             
         # Monthly
         if os.path.exists(monthly_path):
@@ -343,9 +561,11 @@ class TechnicalIndicator:
             df_monthly_res.to_csv(output_monthly, index=False)
             print(f"Saved monthly indicators to {output_monthly}")
 
-            # Save monthly chart
-            chart_monthly = output_monthly.replace('.csv', '.png')
-            self.plot_indicators(df_monthly_res, chart_monthly, title="Monthly Technical Indicators")
+            # Save 3 monthly charts
+            base_path = output_monthly.replace('.csv', '')
+            self.plot_price_overlays(df_monthly_res, f"{base_path}_price_overlays.png", title="Monthly")
+            self.plot_momentum_indicators(df_monthly_res, f"{base_path}_momentum.png", title="Monthly")
+            self.plot_volume_indicators(df_monthly_res, f"{base_path}_volume.png", title="Monthly")
 
 if __name__ == "__main__":
     ti = TechnicalIndicator()
