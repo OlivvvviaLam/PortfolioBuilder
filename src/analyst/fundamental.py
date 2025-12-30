@@ -264,7 +264,7 @@ class FundamentalAnalyst:
         Args:
             ticker: Stock ticker symbol
             data_dir: Path to the data directory
-            output_dir: Directory to save the report. If None, saves in the ticker's data directory
+            output_dir: Directory to save the report. If None, saves in data/output/{timestamp}/analyst/fundamental
             
         Returns:
             Path to the saved report file
@@ -273,15 +273,20 @@ class FundamentalAnalyst:
         report = self.analyze(ticker, data_dir)
         
         # Determine output path
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         if output_dir is None:
-            output_dir = Path(data_dir) / ticker
+            # Save in data/output/{timestamp}/analyst/fundamental/
+            base_path = Path(data_dir).parent  # Go up from ticker folder to data/raw parent
+            if base_path.name == 'raw':
+                base_path = base_path.parent  # Go up one more level to data/
+            output_dir = base_path / "output" / timestamp / "analyst" / "fundamental"
         else:
             output_dir = Path(output_dir)
         
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # Save report
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_file = output_dir / f"{ticker}_fundamental_analysis_{timestamp}.md"
         
         with open(output_file, 'w', encoding='utf-8') as f:

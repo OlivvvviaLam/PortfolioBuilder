@@ -1,11 +1,12 @@
 import re
+import json
 import time
 import threading
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Constants
@@ -274,6 +275,248 @@ class FinvizCollector:
         except Exception as e:
             print(f"Error in screening: {e}")
             return []
+
+    def _fetch_options_page(self, expiry: Optional[str] = None) -> Optional[str]:
+        """
+        Fetch the options page HTML
+        
+        Args:
+            expiry: Optional expiry date in YYYY-MM-DD format
+            
+        Returns:
+            HTML content or None if request fails
+        """
+        if not self.ticker:
+            return None
+            
+        url = f"{self.base_url}/quote.ashx?t={self.ticker}&p=d&ty=oc"
+        if expiry:
+            url += f"&e={expiry}"
+        
+        self.limiter.wait()
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=30)
+            resp.raise_for_status()
+            return resp.text
+        except Exception as e:
+            print(f"Error fetching options page for {self.ticker}: {e}")
+            return None
+    
+    def _extract_options_json_data(self, html: str) -> Optional[Dict]:
+        """
+        Extract the embedded JSON data from the options page
+        
+        Args:
+            html: Page HTML content
+            
+        Returns:
+            Parsed JSON data or None
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        
+        # Find the script tag with route-init-data
+        script = soup.find("script", id="route-init-data")
+        
+        if script and script.string:
+            try:
+                return json.loads(script.string)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing JSON data: {e}")
+                return None
+        
+        return None
+    
+    def get_available_option_expiries(self) -> List[str]:
+        """
+        Get list of available expiry dates for the ticker
+        
+        Returns:
+            List of expiry dates in YYYY-MM-DD format
+        """
+        if not self.ticker:
+            return []
+            
+        html = self._fetch_options_page()
+        if not html:
+            return []
+        
+        data = self._extract_options_json_data(html)
+        if data and "expiries" in data:
+            return data["expiries"]
+        
+        return []
+    
+    def get_nearest_expiry(self, target_days: int = 30, from_date: Optional[str] = None) -> Optional[str]:
+        """
+        Find the expiry date closest to a target number of days from now
+        
+        Args:
+            target_days: Number of days from now to target (default: 30 for 1 month)
+            from_date: Reference date in YYYY-MM-DD format (default: today)
+            
+        Returns:
+            Expiry date in YYYY-MM-DD format or None if no expiries available
+        """
+        expiries = self.get_available_option_expiries()
+        if not expiries:
+            return None
+        
+        # Use provided date or today
+        if from_date:
+            reference = pd.Timestamp(from_date)
+        else:
+            reference = pd.Timestamp.now()
+        
+        target_date = reference + pd.Timedelta(days=target_days)
+        
+        # Find closest expiry to target date
+        closest_expiry = None
+        min_diff = float('inf')
+        
+        for expiry in expiries:
+            expiry_date = pd.Timestamp(expiry)
+            diff = abs((expiry_date - target_date).days)
+            
+            if diff < min_diff:
+                min_diff = diff
+                closest_expiry = expiry
+        
+        return closest_expiry
+    
+    def get_option_chain(self, expiry: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Extract option chain data for a given expiry
+        
+        Args:
+            expiry: Expiry date in YYYY-MM-DD format (e.g., '2026-01-23')
+            
+        Returns:
+            Tuple of (calls_df, puts_df) DataFrames
+        """
+        if not self.ticker:
+            return pd.DataFrame(), pd.DataFrame()
+            
+        html = self._fetch_options_page(expiry)
+        if not html:
+            return pd.DataFrame(), pd.DataFrame()
+        
+        data = self._extract_options_json_data(html)
+        if not data or "options" not in data:
+            print(f"No options data found for {self.ticker}")
+            return pd.DataFrame(), pd.DataFrame()
+        
+        options = data["options"]
+        
+        if not options:
+            print(f"Empty options list for {self.ticker}")
+            return pd.DataFrame(), pd.DataFrame()
+        
+        # Separate calls and puts
+        calls_data = []
+        puts_data = []
+        
+        for opt in options:
+            record = {
+                "Strike": opt.get("strike"),
+                "Bid": opt.get("bidPrice"),
+                "Ask": opt.get("askPrice"),
+                "Last": opt.get("lastClose") if opt.get("lastClose", 0) != 0 else None,
+                "Change": opt.get("lastChange") if opt.get("lastChange", 0) != 0 else None,
+                "OpenInt": opt.get("openInterest", 0),
+                "IV": opt.get("iv"),
+                "Delta": opt.get("delta"),
+                "Gamma": opt.get("gamma"),
+                "Theta": opt.get("theta"),
+                "Vega": opt.get("vega"),
+                "Rho": opt.get("rho"),
+            }
+            
+            if opt.get("type") == "call":
+                calls_data.append(record)
+            elif opt.get("type") == "put":
+                puts_data.append(record)
+        
+        # Create DataFrames
+        calls_df = pd.DataFrame(calls_data) if calls_data else pd.DataFrame()
+        puts_df = pd.DataFrame(puts_data) if puts_data else pd.DataFrame()
+        
+        # Sort by strike
+        if not calls_df.empty:
+            calls_df = calls_df.sort_values("Strike").reset_index(drop=True)
+        if not puts_df.empty:
+            puts_df = puts_df.sort_values("Strike").reset_index(drop=True)
+        
+        return calls_df, puts_df
+    
+    def save_option_chain(self, expiry: str, output_dir: str = ".") -> Tuple[str, str]:
+        """
+        Extract option chain and save to CSV files
+        
+        Args:
+            expiry: Expiry date in YYYY-MM-DD format
+            output_dir: Directory to save files
+            
+        Returns:
+            Tuple of (calls_path, puts_path)
+        """
+        if not self.ticker:
+            return "", ""
+            
+        calls_df, puts_df = self.get_option_chain(expiry)
+        
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        calls_file = output_path / f"finviz_OptionChainCall_{expiry}.csv"
+        puts_file = output_path / f"finviz_OptionChainPut_{expiry}.csv"
+        
+        # Save calls
+        if not calls_df.empty:
+            calls_df.to_csv(calls_file, index=False)
+            print(f"Saved calls to: {calls_file}")
+        else:
+            print("No calls data to save")
+            calls_file = ""
+            
+        # Save puts
+        if not puts_df.empty:
+            puts_df.to_csv(puts_file, index=False)
+            print(f"Saved puts to: {puts_file}")
+        else:
+            print("No puts data to save")
+            puts_file = ""
+        
+        return str(calls_file), str(puts_file)
+    
+    def save_option_chains_multi_expiry(self, output_dir: str = ".", target_days: List[int] = None) -> Dict[str, Tuple[str, str]]:
+        """
+        Save option chains for multiple target expiry periods
+        
+        Args:
+            output_dir: Directory to save files
+            target_days: List of target days from now (default: [7, 30] for 1 week and 1 month)
+            
+        Returns:
+            Dictionary mapping expiry dates to (calls_path, puts_path) tuples
+        """
+        if not self.ticker:
+            return {}
+        
+        if target_days is None:
+            target_days = [7, 30]  # Default: 1 week and 1 month
+        
+        results = {}
+        
+        for days in target_days:
+            expiry = self.get_nearest_expiry(target_days=days)
+            if expiry:
+                print(f"\nCollecting option chain for ~{days} days out (expiry: {expiry})...")
+                paths = self.save_option_chain(expiry, output_dir)
+                results[expiry] = paths
+            else:
+                print(f"No expiry found for target {days} days")
+        
+        return results
 
     def get_all_data(self, chart_output_dir: str = "charts") -> Dict[str, Union[str, pd.DataFrame, List[str]]]:
         """

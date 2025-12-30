@@ -573,7 +573,7 @@ if __name__ == "__main__":
     # The actual paths might vary, but we use the provided ones for the runner.
     base_path = "collectors_all/data/processed/AAPL_20251226_174048/"
     ti.process_files(
-        os.path.join(base_path, "yfinance_History1mo_d.csv"),
-        os.path.join(base_path, "yfinance_History6m_1wk.csv"),
-        os.path.join(base_path, "yfinance_History2y_1mo.csv")
+        os.path.join(base_path, "yfinance_History2mo_d.csv"),
+        os.path.join(base_path, "yfinance_History1y_1wk.csv"),
+        os.path.join(base_path, "yfinance_History4y_1mo.csv")
     )

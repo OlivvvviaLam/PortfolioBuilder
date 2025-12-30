@@ -107,28 +107,6 @@ class YFinanceCollector:
         """Estimation of growth"""
         return self.ticker.growth_estimates
 
-    def get_option_chain_call(self, date_index: int = 0) -> pd.DataFrame:
-        """Call option chain"""
-        if not self.ticker.options:
-            return pd.DataFrame()
-        idx = min(date_index, len(self.ticker.options) - 1)
-        date = self.ticker.options[idx]
-        chain = self.ticker.option_chain(date)
-        if chain.calls is not None:
-            return chain.calls[['strike', 'lastPrice', 'change', 'volume', 'openInterest', 'impliedVolatility']].dropna()
-        return pd.DataFrame()
-
-    def get_option_chain_put(self, date_index: int = 0) -> pd.DataFrame:
-        """Put option chain"""
-        if not self.ticker.options:
-            return pd.DataFrame()
-        idx = min(date_index, len(self.ticker.options) - 1)
-        date = self.ticker.options[idx]
-        chain = self.ticker.option_chain(date)
-        if chain.puts is not None:
-            return chain.puts[['strike', 'lastPrice', 'change', 'volume', 'openInterest', 'impliedVolatility']].dropna()
-        return pd.DataFrame()
-
     # Integrated from get_historical_stat.py
     def _fetch_key_stats_tables(self) -> List[pd.DataFrame]:
         """Internal helper to fetch tables from key-statistics page."""
@@ -316,9 +294,9 @@ class YFinanceCollector:
         """
         return {
             "TickerInfo": self.get_ticker_info(),
-            "History1mo/d": self.get_history_2mo_1d(),
-            "History6m/1wk": self.get_history_1y_1wk(),
-            "History2y/1mo": self.get_history_4y_1mo(),
+            "History2mo_d": self.get_history_2mo_1d(),
+            "History1y_1wk": self.get_history_1y_1wk(),
+            "History4y_1mo": self.get_history_4y_1mo(),
             "UpcommingEvents": self.get_upcoming_events(),
             "HoldingBreakdown": self.get_holding_breakdown(),
             "MajorInstitutionalHolders": self.get_major_institutional_holders(),
@@ -329,8 +307,6 @@ class YFinanceCollector:
             "EarningEstimate": self.get_earning_estimate(),
             "EPSEestimateHistory": self.get_eps_estimate_history(),
             "GrowthEstimate": self.get_growth_estimate(),
-            "OptionChainCall": self.get_option_chain_call(),
-            "OptionChainPut": self.get_option_chain_put(),
             "KeyFinanceStat_yfiance": self.get_key_finance_stats(),
             "HistoricalStat": self.get_historical_valuation_stats(),
             "FinancialReport": self.get_financial_report(),
